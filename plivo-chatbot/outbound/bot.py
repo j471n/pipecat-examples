@@ -23,6 +23,8 @@ from pipecat.serializers.plivo import PlivoFrameSerializer
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.sarvam import SarvamTTSService
+from pipecat.services.sarvam.stt import SarvamSTTService
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
@@ -32,14 +34,23 @@ from pipecat.transports.websocket.fastapi import (
 load_dotenv(override=True)
 
 
+print("Sarvam AI: ", os.getenv("SARVAM_API_KEY"))
+
 async def run_bot(transport: BaseTransport, handle_sigint: bool):
-    llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"))
-
-    stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
-
-    tts = CartesiaTTSService(
-        api_key=os.getenv("CARTESIA_API_KEY"),
-        voice_id="71a7ad14-091c-4e8e-a314-022ece01c121",  # British Reading Lady
+    # Language Model
+    llm = OpenAILLMService(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        model="gpt-4o",
+    )
+    
+    stt = SarvamSTTService(
+        api_key=os.getenv("SARVAM_API_KEY"),
+        # model="saarika:v2",  # Saarika for STT
+    )
+    # Text-to-Speech (Indian voices)
+    tts = SarvamTTSService(
+        api_key=os.getenv("SARVAM_API_KEY"),
+        # voice_id="your_preferred_voice",
     )
 
     messages = [

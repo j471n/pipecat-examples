@@ -29,6 +29,8 @@ load_dotenv(override=True)
 # ----------------- HELPERS ----------------- #
 
 
+HOST_URL = "94mw6kn4-7860.inc1.devtunnels.ms"
+
 async def make_plivo_call(
     session: aiohttp.ClientSession, to_number: str, from_number: str, answer_url: str
 ):
@@ -52,6 +54,8 @@ async def make_plivo_call(
         "answer_url": answer_url,
         "answer_method": "GET",
     }
+    
+    print("Data : ", data)
 
     url = f"https://api.plivo.com/v1/Account/{auth_id}/Call/"
 
@@ -105,13 +109,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("https")
+async def add_ngrok_header(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["ngrok-skip-browser-warning"] = "true"
+    return response
+
+
 
 @app.post("/start")
 async def initiate_outbound_call(request: Request) -> JSONResponse:
-    """Handle outbound call request and initiate call via Plivo."""
-    print("Received outbound call request")
+        """Handle outbound call request and initiate call via Plivo."""
+        print("Received outbound call request")
 
-    try:
+    # try:
         data = await request.json()
 
         # Validate request data
@@ -127,8 +138,8 @@ async def initiate_outbound_call(request: Request) -> JSONResponse:
         body_data = data.get("body", {})
         print(f"Processing outbound call to {phone_number}")
 
-        # Get server URL for answer URL
-        host = request.headers.get("host")
+        # Get server URL for answer URL (just the domain, no protocol)
+        host = HOST_URL
         if not host:
             raise HTTPException(status_code=400, detail="Unable to determine server host")
 
@@ -138,48 +149,50 @@ async def initiate_outbound_call(request: Request) -> JSONResponse:
             if not host.startswith("localhost") and not host.startswith("127.0.0.1")
             else "http"
         )
+        
 
         # Add body data as query parameters to answer URL
         answer_url = f"{protocol}://{host}/answer"
+        print("Answer URL: ", answer_url)
         if body_data:
             body_json = json.dumps(body_data)
             body_encoded = urllib.parse.quote(body_json)
             answer_url = f"{answer_url}?body_data={body_encoded}"
 
         # Initiate outbound call via Plivo
-        try:
-            call_result = await make_plivo_call(
-                session=request.app.state.session,
-                to_number=phone_number,
-                from_number=os.getenv("PLIVO_PHONE_NUMBER"),
-                answer_url=answer_url,
-            )
+        # try:
+        call_result = await make_plivo_call(
+            session=request.app.state.session,
+            to_number=phone_number,
+            from_number=os.getenv("PLIVO_PHONE_NUMBER"),
+            answer_url=answer_url,
+        )
 
-            # Extract call UUID from Plivo response
-            call_uuid = (
-                call_result.get("request_uuid") or call_result.get("message_uuid") or "unknown"
-            )
+        # Extract call UUID from Plivo response
+        call_uuid = (
+            call_result.get("request_uuid") or call_result.get("message_uuid") or "unknown"
+        )
 
-        except Exception as e:
-            print(f"Error initiating Plivo call: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to initiate call: {str(e)}")
+        # except Exception as e:
+        #     print(f"Error initiating Plivo call: {e}")
+        #     raise HTTPException(status_code=500, detail=f"Failed to initiate call: {str(e)}")
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Unexpected error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+    # except HTTPException:
+    #     raise
+    # except Exception as e:
+    #     print(f"Unexpected error: {str(e)}")
+    #     raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
 
-    return JSONResponse(
-        {
-            "call_uuid": call_uuid,
-            "status": "call_initiated",
-            "phone_number": phone_number,
-        }
-    )
+        return JSONResponse(
+            {
+                "call_uuid": call_uuid,
+                "status": "call_initiated",
+                "phone_number": phone_number,
+            }
+        )
 
 
-@app.get("/answer")
+@app.api_route("/answer", methods=["GET", "POST"])
 async def get_answer_xml(
     request: Request,
     CallUUID: str = Query(None, description="Plivo call UUID"),
@@ -187,6 +200,24 @@ async def get_answer_xml(
 ) -> HTMLResponse:
     """Return XML instructions for connecting call to WebSocket."""
     print("Serving answer XML for outbound call")
+    print(f"Request method: {request.method}")
+    print(f"Request headers: {dict(request.headers)}")
+    
+    # Log query parameters
+    print(f"Query params: {dict(request.query_params)}")
+    
+    # If POST, try to read form data or JSON
+    if request.method == "POST":
+        try:
+            form_data = await request.form()
+            print(f"Form data: {dict(form_data)}")
+        except:
+            pass
+        try:
+            json_data = await request.json()
+            print(f"JSON data: {json_data}")
+        except:
+            pass
 
     # Parse body data from query parameter
     parsed_body_data = {}
@@ -203,8 +234,8 @@ async def get_answer_xml(
             print(f"Body data: {parsed_body_data}")
 
     try:
-        # Get the server host to construct WebSocket URL
-        host = request.headers.get("host")
+        # Get the server host to construct WebSocket URL (just the domain, no protocol)
+        host = HOST_URL
         if not host:
             raise HTTPException(status_code=400, detail="Unable to determine server host")
 
@@ -237,10 +268,12 @@ async def get_answer_xml(
         # Generate XML response for Plivo
         xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+<Record recordSession="true" callbackUrl="https://fierce-fox-59.webhook.cool" />
     <Stream bidirectional="true" keepCallAlive="true" contentType="audio/x-mulaw;rate=8000">
         {ws_url}
     </Stream>
 </Response>"""
+
 
         return HTMLResponse(content=xml_content, media_type="application/xml")
 
@@ -294,3 +327,4 @@ async def websocket_endpoint(
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=7860)
+    print("Server is running on http://localhost:7860")
