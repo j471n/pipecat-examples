@@ -9,6 +9,7 @@ import os
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.frames.frames import EndFrame, LLMMessagesFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -37,19 +38,22 @@ load_dotenv(override=True)
 print("Sarvam AI: ", os.getenv("SARVAM_API_KEY"))
 
 async def run_bot(transport: BaseTransport, handle_sigint: bool):
-    # Language Model
+    # Language Model - using gpt-4o-mini for faster responses
+    # (change to gpt-4o if you need better quality)
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4o",
+        model="gpt-4o-mini",  # Faster than gpt-4o
     )
     
     stt = SarvamSTTService(
         api_key=os.getenv("SARVAM_API_KEY"),
+        sample_rate=8000,  # Match phone audio
         # model="saarika:v2",  # Saarika for STT
     )
-    # Text-to-Speech (Indian voices)
+    # Text-to-Speech (Indian voices) - optimized for speed
     tts = SarvamTTSService(
         api_key=os.getenv("SARVAM_API_KEY"),
+        sample_rate=8000,  # Match phone audio
         # voice_id="your_preferred_voice",
     )
 
@@ -57,10 +61,10 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool):
         {
             "role": "system",
             "content": (
-                "You are a friendly assistant. "
+                "You are a friendly assistant making an outbound call. "
                 "Your responses will be read aloud, so keep them concise and conversational. "
                 "Avoid special characters or formatting. "
-                "Begin by saying: 'Hello! This is an automated call from our Plivo chatbot demo.' "
+                "Start the conversation immediately by saying: 'Hello! This is an automated call from our Plivo chatbot demo. How can I help you today?' "
             ),
         },
     ]
@@ -97,8 +101,10 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool):
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        # Kick off the outbound conversation, waiting for the user to speak first
-        logger.info("Starting outbound call conversation")
+        # Immediately greet the user when call connects
+        logger.info("Starting outbound call conversation - bot will speak first")
+        # Trigger the bot to speak by sending the initial context
+        await task.queue_frames([LLMMessagesFrame(context.messages)])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
